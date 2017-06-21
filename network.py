@@ -3,6 +3,7 @@
 # TODO
 # pre-extract np stuff
 # use in-place arithmetic when possible
+# take care with rng seeding, etc.
 
 import numpy as np
 from scipy.stats import norm
@@ -79,7 +80,7 @@ class Output(object):
         self.baseline_val = baseline_val
 
         # making output time series
-        bell = norm.pdf(trial_obj.time_ms, center_ms, width_ms)
+        bell = norm.pdf(trial_obj.time_ms, center_ms, width_ms).reshape(1, -1)
         bell /= np.max(bell)  # by the way, this is a fast way to normalize a vector to 1
         self.series = bell * (value - baseline_val) + baseline_val
 
