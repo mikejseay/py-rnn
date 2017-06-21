@@ -5,6 +5,7 @@
 # use in-place arithmetic when possible
 
 import numpy as np
+from scipy.stats import norm
 
 class Network(object):
 
@@ -23,27 +24,6 @@ class Network(object):
 
         self.n_plastic = int(np.round(n_units * p_plastic))
         self.scale_recurr = syn_strength / np.sqrt(p_connect * n_units)
-
-class Input(object):
-
-    ''' an input to a network '''
-
-    def __init__(self, n_units, value, start_ms, duration_ms):
-        self.n_units = n_units
-        self.value = value
-        self.start_ms = start_ms
-        self.duration_ms = duration_ms
-
-class Output(object):
-
-    ''' a (desired) output from a network '''
-
-    def __init__(self, n_units, value, center_ms, width_ms, baseline_val):
-        self.n_units = n_units
-        self.value = value
-        self.center_ms = center_ms
-        self.width_ms = width_ms
-        self.baseline_val = baseline_val
 
 class Trial(object):
 
@@ -68,6 +48,40 @@ class Trial(object):
         self.plot_skip = np.ceil(self.n_steps / self.plot_points)
         if self.plot_skip % 2 == 0:
             self.plot_skip += 1
+
+class Input(object):
+
+    ''' an input to a network '''
+
+    def __init__(self, trial_obj, n_units, value, start_ms, duration_ms):
+        self.n_units = n_units
+        self.value = value
+        self.start_ms = start_ms
+        self.duration_ms = duration_ms
+
+        # making input time series
+        startpulse_idx = int(np.round(start_ms / trial_obj.time_step))
+        pulsedur_samps = int(np.round(duration_ms / trial_obj.time_step))
+
+        input_series = np.zeros((n_units, trial_obj.n_steps))
+        input_series[0, startpulse_idx:startpulse_idx + pulsedur_samps - 1] = value
+        self.series = input_series
+
+class Output(object):
+
+    ''' a (desired) output from a network '''
+
+    def __init__(self, trial_obj, n_units, value, center_ms, width_ms, baseline_val):
+        self.n_units = n_units
+        self.value = value
+        self.center_ms = center_ms
+        self.width_ms = width_ms
+        self.baseline_val = baseline_val
+
+        # making output time series
+        bell = norm.pdf(trial_obj.time_ms, center_ms, width_ms)
+        bell /= np.max(bell)  # by the way, this is a fast way to normalize a vector to 1
+        self.series = bell * (value - baseline_val) + baseline_val
 
 class Trainer(object):
 
