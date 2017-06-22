@@ -41,6 +41,9 @@ class Trial(object):
         self.start_train_ms = start_train_ms
         self.end_train_ms = end_train_ms
 
+        self.start_train_n = int(np.round(start_train_ms / time_step))
+        self.end_train_n = int(np.round(end_train_ms / time_step))
+
         self.max_ms = self.end_train_ms + self.extra_end_ms
         self.n_steps = int(np.floor(self.max_ms / self.time_step))
         self.time_ms = np.arange(0, self.max_ms, self.time_step)
