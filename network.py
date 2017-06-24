@@ -6,8 +6,8 @@
 # take care with rng seeding, etc.
 
 import numpy as np
-from scipy.stats import norm
 from scipy.sparse import csr_matrix
+from scipy.stats import norm
 
 prng_seed = 1234
 prng = np.random.RandomState(prng_seed)
@@ -16,11 +16,11 @@ prng = np.random.RandomState(prng_seed)
 class Generator(object):
     ''' a randomly-connected recurrent neural network '''
 
-    def __init__(self, n_units, p_plastic, p_connect, syn_strength):
+    def __init__(self, n_units, p_connect, syn_strength, p_plastic):
         self.n_units = n_units
-        self.p_plastic = p_plastic
         self.p_connect = p_connect
         self.syn_strength = syn_strength
+        self.p_plastic = p_plastic
 
         self.n_plastic = int(np.round(n_units * p_plastic))
         self.scale_recurr = syn_strength / np.sqrt(p_connect * n_units)
@@ -97,7 +97,6 @@ class Trainer(object):
     def __init__(self, generator_obj, input_obj, output_obj, trial_obj,
                  tau_ms, sigmoid, noise_harvest, noise_train,
                  n_trials_recurrent, n_trials_readout, n_trials_test):
-
         # other objs
         self.gen = generator_obj
         self.inp = input_obj
@@ -119,7 +118,6 @@ class Trainer(object):
         self.time_div = tau_ms / self.tr.time_step
 
     def initialize_weights(self):
-
         # generator recurrent weights (wxx)
         wxx_mask = prng.rand(self.gen.n_units, self.gen.n_units)  # uniform distribution!
         wxx_mask[wxx_mask <= self.gen.p_connect] = 1
@@ -139,32 +137,26 @@ class Trainer(object):
                                          size=(self.out.n_units, self.gen.n_units))
 
     def harvest_innate(self):
-
         # assigning recurrent and input weights to workspace names
         wxx = self.gen.wxx_ini
         winputx = self.inp.winputx_ini
 
         # creating all noise ahead of time
-        use_noiseamp = self.noise_innate
-        all_noise = np.random.normal(scale=np.sqrt(self.tr.time_step),
-                                     size=(self.gen.n_units, self.tr.n_steps))
+        all_noise = self.noise_innate * prng.normal(scale=np.sqrt(self.tr.time_step),
+                                                    size=(self.gen.n_units, self.tr.n_steps))
 
         # what we are really interested in: the innate trajectory
         x_history = np.empty((self.gen.n_units, self.tr.n_steps))
 
         # creating initial conditions for firing rate & activation level
-        xv = 2 * np.random.rand(self.gen.n_units, 1) - 1
-        x = self.sigmoid(xv)
+        x_lvl = 2 * prng.rand(self.gen.n_units, 1) - 1
+        x_fr = self.sigmoid(x_lvl)
 
         for i in range(self.tr.n_steps):
-
-            in_vec = self.inp.series[:, i]
-            noise = use_noiseamp * all_noise[:, [i]]
-            xfr_new = wxx * x + winputx * in_vec + noise
-            xv += (-xv + xfr_new) / self.time_div
-            x = self.sigmoid(xv)
-
-            x_history[:, [i]] = x
+            xfr_update = wxx * x_fr + winputx * self.inp.series[:, i] + all_noise[:, [i]]
+            x_lvl += (-x_lvl + xfr_update) / self.time_div
+            x_fr = self.sigmoid(x_lvl)
+            x_history[:, [i]] = x_fr
 
         self.gen.innate = x_history  # save the innate trajectory
 
