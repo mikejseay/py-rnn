@@ -4,6 +4,8 @@
 # pre-extract np stuff
 # use in-place arithmetic when possible
 # take care with rng seeding, etc.
+# compare sparse array to regular numpy array
+# figure out how to vectorize the recurrent training step (no for loop over plastic units)
 
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -106,8 +108,8 @@ class Trainer(object):
         # training params
         self.tau_ms = tau_ms
         self.sigmoid = sigmoid
-        self.noise_amp = noise_train
-        self.noise_innate = noise_harvest
+        self.noise_train = noise_train
+        self.noise_harvest = noise_harvest
 
         # number of trials
         self.n_trials_recurrent = n_trials_recurrent
@@ -142,8 +144,8 @@ class Trainer(object):
         winputx = self.inp.winputx_ini
 
         # creating all noise ahead of time
-        all_noise = self.noise_innate * prng.normal(scale=np.sqrt(self.tr.time_step),
-                                                    size=(self.gen.n_units, self.tr.n_steps))
+        all_noise = self.noise_harvest * prng.normal(scale=np.sqrt(self.tr.time_step),
+                                                     size=(self.gen.n_units, self.tr.n_steps))
 
         # what we are really interested in: the innate trajectory
         x_history = np.empty((self.gen.n_units, self.tr.n_steps))
@@ -152,16 +154,69 @@ class Trainer(object):
         x_lvl = 2 * prng.rand(self.gen.n_units, 1) - 1
         x_fr = self.sigmoid(x_lvl)
 
-        for i in range(self.tr.n_steps):
-            xfr_update = wxx * x_fr + winputx * self.inp.series[:, i] + all_noise[:, [i]]
-            x_lvl += (-x_lvl + xfr_update) / self.time_div
+        for t in range(self.tr.n_steps):
+            x_lvl_update = wxx * x_fr + winputx * self.inp.series[:, t] + all_noise[:, [t]]
+            x_lvl += (-x_lvl + x_lvl_update) / self.time_div
             x_fr = self.sigmoid(x_lvl)
-            x_history[:, [i]] = x_fr
+            x_history[:, [t]] = x_fr
+
+        self.gen.innate = x_history  # save the innate trajectory
+
+    def harvest_innate2(self):
+        ''' version which uses the @ operator instead '''
+
+        # assigning recurrent and input weights to workspace names
+        wxx = self.gen.wxx_ini
+        winputx = self.inp.winputx_ini
+
+        # creating all noise ahead of time
+        all_noise = self.noise_harvest * prng.normal(scale=np.sqrt(self.tr.time_step),
+                                                     size=(self.gen.n_units, self.tr.n_steps))
+
+        # what we are really interested in: the innate trajectory
+        x_history = np.empty((self.gen.n_units, self.tr.n_steps))
+
+        # creating initial conditions for firing rate & activation level
+        x_lvl = 2 * prng.rand(self.gen.n_units) - 1
+        x_fr = self.sigmoid(x_lvl)
+
+        for t in range(self.tr.n_steps):
+            x_lvl_update = wxx @ x_fr + winputx @ self.inp.series[:, t] + all_noise[:, t]
+            x_lvl += (-x_lvl + x_lvl_update) / self.time_div
+            x_fr = self.sigmoid(x_lvl)
+            x_history[:, t] = x_fr
 
         self.gen.innate = x_history  # save the innate trajectory
 
     def train_recurrent(self):
-        pass
+        # assigning recurrent and input weights to workspace names
+        wxx = self.gen.wxx_ini
+        winputx = self.inp.winputx_ini
+
+        # creating all noise ahead of time
+        all_noise = self.noise_train * prng.normal(scale=np.sqrt(self.tr.time_step),
+                                                   size=(self.gen.n_units, self.n_trials_recurrent, self.tr.n_steps))
+
+        # creating all initial condition for firing rate & activation level ahead of time
+        x_lvl_init = 2 * prng.rand(self.gen.n_units, self.n_trials_recurrent) - 1
+        x_fr_init = self.sigmoid(x_lvl_init)
+
+        # trials are non-parallel
+        for trial in range(self.n_trials_recurrent):
+
+            x_lvl = x_lvl_init[:, [trial]]
+            x_fr = x_fr_init[:, [trial]]
+
+            # time steps are non-parallel
+            for t in range(self.tr.n_steps):
+                x_lvl_update = wxx * x_fr + winputx * self.inp.series[:, t] + all_noise[:, trial, [t]]
+                x_lvl += (-x_lvl + x_lvl_update) / self.time_div
+                x_fr = self.sigmoid(x_lvl)
+
+                # updating plastic units will eventually be IN parallel (hopefully)
+
+
+
 
     def train_readout(self):
         pass
