@@ -1,4 +1,6 @@
-""" testing the network module """
+""" implements the experimental protocol of Laje & Buonomano (2013).
+    sets parameters, performs the experiment, and saves figures into a PDF
+    that will be placed into the figs subdirectory of the codebase """
 
 import os
 import numpy as np
@@ -44,12 +46,14 @@ IN = N.Input(TRYAL, **INPUT_PARAMS)
 OUT = N.Output(TRYAL, **OUTPUT_PARAMS)
 TRAIN = N.Trainer(GEN, IN, OUT, TRYAL, **TRAIN_PARAMS)
 
+# performing the experimental protocol
 TRAIN.initialize_weights()
 TRAIN.harvest_innate()
 TRAIN.train_recurrent()
 TRAIN.train_readout()
 f_lst = TRAIN.test()
 
+# saving the test trial figures into a PDF (one trial per page)
 cwd = os.getcwd()
 fig_dir = os.path.join(cwd, 'figs')
 if not os.path.exists(fig_dir):

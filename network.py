@@ -122,6 +122,9 @@ class Trainer(object):
         self.time_div = tau_ms / self.tr.time_step
 
     def initialize_weights(self):
+        """ initialize synaptic weights, including input-to-recurrent,
+            recurrent-to-recurrent, and recurrent-to-output """
+
         # generator recurrent weights (wxx)
         wxx_mask = prng.rand(self.gen.n_units, self.gen.n_units)  # uniform distribution!
         wxx_mask[wxx_mask <= self.gen.p_connect] = 1
@@ -142,7 +145,7 @@ class Trainer(object):
                                          size=(self.out.n_units, self.gen.n_units))
 
     def harvest_innate(self):
-        """ version which uses the @ operator instead """
+        """ present the input to the RRN and save its trajectory. """
 
         print('harvesting innate trajectory')
 
@@ -170,6 +173,8 @@ class Trainer(object):
         self.gen.innate = x_history  # save the innate trajectory
 
     def train_recurrent(self):
+        """ train the recurrent weights using a previously harvested innate trajectory
+            as the target. uses FORCE with recursive least squares (RLS) learning """
 
         print('training recurrent weights with innate target')
 
@@ -231,6 +236,8 @@ class Trainer(object):
         self.gen.wxx_recurr_trained = wxx
 
     def train_readout(self):
+        """ train the readout weights using a pre-defined output as the target.
+            uses FORCE with recursive least squares (RLS) learning """
 
         print('training readout weights with output target')
 
@@ -289,6 +296,7 @@ class Trainer(object):
         self.out.wxout_readout_trained = wxout
 
     def test(self):
+        """ test the network by presenting the input and recording the output """
 
         print('testing')
 
@@ -333,6 +341,8 @@ class Trainer(object):
 
 
 def plot_trial(trainer_obj, x_history, out_history):
+    """ given a Trainer object, an array of recurrent unit firing rates,
+        and an array of their outputs, plot a trial """
 
     f = plt.figure()
 
