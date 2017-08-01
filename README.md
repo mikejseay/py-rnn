@@ -1,4 +1,4 @@
-# Project Title
+# py-rnn
 
 A Python package for creating sparse, randomly-connected, recurrent neural networks, training them using an "innate trajectory" approach, and performing associated experiments.
 
