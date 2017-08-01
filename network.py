@@ -1,4 +1,4 @@
-''' stuff related to neural networks '''
+""" stuff related to neural networks """
 
 # TODO
 # pre-extract np stuff
@@ -7,16 +7,18 @@
 # compare sparse array to regular numpy array
 # figure out how to vectorize the recurrent training step (no for loop over plastic units)
 
+import matplotlib.pyplot as plt
 import numpy as np
-from scipy.sparse import csr_matrix
+# from scipy.sparse import csr_matrix
 from scipy.stats import norm
+from tqdm import tqdm
 
 prng_seed = 1234
 prng = np.random.RandomState(prng_seed)
 
 
 class Generator(object):
-    ''' a randomly-connected recurrent neural network '''
+    """ a randomly-connected recurrent neural network """
 
     def __init__(self, n_units, p_connect, syn_strength, p_plastic):
         self.n_units = n_units
@@ -29,7 +31,7 @@ class Generator(object):
 
 
 class Trial(object):
-    ''' a single trial and its (timing) characteristics '''
+    """ a single trial and its (timing) characteristics """
     # defaults not currently designed to be configured
     extra_train_ms = 150
     extra_end_ms = 200
@@ -56,7 +58,7 @@ class Trial(object):
 
 
 class Input(object):
-    ''' an input to a network '''
+    """ an input to a network """
 
     def __init__(self, trial_obj, n_units, value, start_ms, duration_ms):
         self.n_units = n_units
@@ -74,7 +76,7 @@ class Input(object):
 
 
 class Output(object):
-    ''' a (desired) output from a network '''
+    """ a (desired) output from a network """
 
     def __init__(self, trial_obj, n_units, value, center_ms, width_ms, baseline_val):
         self.n_units = n_units
@@ -90,11 +92,11 @@ class Output(object):
 
 
 class Trainer(object):
-    ''' training object.
+    """ training object.
         consumes network, input, output, and trial objects.
         defines some parameters relevant to training.
         simulates a neural network and trains its weights.
-        stages are innate, recurrent, readout, and test '''
+        stages are innate, recurrent, readout, and test """
 
     def __init__(self, generator_obj, input_obj, output_obj, trial_obj,
                  tau_ms, sigmoid, noise_harvest, noise_train,
@@ -128,7 +130,8 @@ class Trainer(object):
                                size=(self.gen.n_units, self.gen.n_units))
         wxx_nonsparse = wxx_vals * wxx_mask
         np.fill_diagonal(wxx_nonsparse, 0)
-        self.gen.wxx_ini = csr_matrix(wxx_nonsparse)
+        # self.gen.wxx_ini = csr_matrix(wxx_nonsparse)
+        self.gen.wxx_ini = wxx_nonsparse
 
         # input => RRN (winputx)
         self.inp.winputx_ini = prng.normal(scale=1,
@@ -139,31 +142,7 @@ class Trainer(object):
                                          size=(self.out.n_units, self.gen.n_units))
 
     def harvest_innate(self):
-        # assigning recurrent and input weights to workspace names
-        wxx = self.gen.wxx_ini
-        winputx = self.inp.winputx_ini
-
-        # creating all noise ahead of time
-        all_noise = self.noise_harvest * prng.normal(scale=np.sqrt(self.tr.time_step),
-                                                     size=(self.gen.n_units, self.tr.n_steps))
-
-        # what we are really interested in: the innate trajectory
-        x_history = np.empty((self.gen.n_units, self.tr.n_steps))
-
-        # creating initial conditions for firing rate & activation level
-        x_lvl = 2 * prng.rand(self.gen.n_units, 1) - 1
-        x_fr = self.sigmoid(x_lvl)
-
-        for t in range(self.tr.n_steps):
-            x_lvl_update = wxx * x_fr + winputx * self.inp.series[:, t] + all_noise[:, [t]]
-            x_lvl += (-x_lvl + x_lvl_update) / self.time_div
-            x_fr = self.sigmoid(x_lvl)
-            x_history[:, [t]] = x_fr
-
-        self.gen.innate = x_history  # save the innate trajectory
-
-    def harvest_innate2(self):
-        ''' version which uses the @ operator instead '''
+        """ version which uses the @ operator instead """
 
         # assigning recurrent and input weights to workspace names
         wxx = self.gen.wxx_ini
@@ -193,33 +172,159 @@ class Trainer(object):
         wxx = self.gen.wxx_ini
         winputx = self.inp.winputx_ini
 
+        # initializing the P matrix
+        delta = 1
+        pre_plastic_inds = np.empty(self.gen.n_plastic, dtype=object)
+        p_recurr = np.empty(self.gen.n_plastic, dtype=object)
+        row_inds, col_inds = wxx.nonzero()
+        for p_unit in range(self.gen.n_plastic):
+            tmp_inds = col_inds[np.where(row_inds == p_unit)[0]]
+            pre_plastic_inds[p_unit] = tmp_inds
+            p_recurr[p_unit] = np.eye(tmp_inds.size) / delta
+
         # creating all noise ahead of time
         all_noise = self.noise_train * prng.normal(scale=np.sqrt(self.tr.time_step),
-                                                   size=(self.gen.n_units, self.n_trials_recurrent, self.tr.n_steps))
+                                                   size=(
+                                                       self.gen.n_units, self.n_trials_recurrent,
+                                                       self.tr.n_steps))
 
         # creating all initial condition for firing rate & activation level ahead of time
         x_lvl_init = 2 * prng.rand(self.gen.n_units, self.n_trials_recurrent) - 1
         x_fr_init = self.sigmoid(x_lvl_init)
 
         # trials are non-parallel
+        do_train = False
         for trial in range(self.n_trials_recurrent):
 
-            x_lvl = x_lvl_init[:, [trial]]
-            x_fr = x_fr_init[:, [trial]]
+            x_lvl = x_lvl_init[:, trial]
+            x_fr = x_fr_init[:, trial]
 
             # time steps are non-parallel
-            for t in range(self.tr.n_steps):
-                x_lvl_update = wxx * x_fr + winputx * self.inp.series[:, t] + all_noise[:, trial, [t]]
+            for t in tqdm(range(self.tr.n_steps)):
+                x_lvl_update = wxx @ x_fr + winputx @ self.inp.series[:, t] + all_noise[:, trial, t]
                 x_lvl += (-x_lvl + x_lvl_update) / self.time_div
                 x_fr = self.sigmoid(x_lvl)
 
-                # updating plastic units will eventually be IN parallel (hopefully)
+                if t == self.tr.start_train_n:
+                    do_train = True
+                if t == self.tr.end_train_n:
+                    do_train = False
 
+                if do_train and t % self.tr.spacing == 0:
 
+                    error = x_fr - self.gen.innate[:, t]
 
+                    for p_unit in range(self.gen.n_plastic):
+                        x_pre = x_fr[pre_plastic_inds[p_unit]]
+                        p_old = p_recurr[p_unit]
+                        p_old_x = p_old @ x_pre
+                        den_recurr = 1 + x_pre @ p_old_x
+                        p_recurr[p_unit] = p_old - (np.outer(p_old_x, p_old_x) / den_recurr)
+                        dw = -error[p_unit] * p_old_x / den_recurr
+                        wxx[p_unit, pre_plastic_inds[p_unit]] += dw
+
+        self.gen.wxx_recurr_trained = wxx
 
     def train_readout(self):
-        pass
+        # assigning recurrent and input weights to workspace names
+        wxx = self.gen.wxx_recurr_trained
+        winputx = self.inp.winputx_ini
+        wxout = self.out.wxout_ini
 
-    def test(selfs):
-        pass
+        # initializing the P matrix
+        delta = 1
+        p_readout = np.eye(self.gen.n_units) / delta
+
+        # creating all noise ahead of time
+        all_noise = self.noise_train * prng.normal(scale=np.sqrt(self.tr.time_step),
+                                                   size=(
+                                                       self.gen.n_units, self.n_trials_readout,
+                                                       self.tr.n_steps))
+
+        # creating all initial condition for firing rate & activation level ahead of time
+        x_lvl_init = 2 * prng.rand(self.gen.n_units, self.n_trials_readout) - 1
+        x_fr_init = self.sigmoid(x_lvl_init)
+
+        # trials are non-parallel
+        do_train = False
+        for trial in range(self.n_trials_readout):
+
+            x_lvl = x_lvl_init[:, trial]
+            x_fr = x_fr_init[:, trial]
+
+            # time steps are non-parallel
+            for t in tqdm(range(self.tr.n_steps)):
+                x_lvl_update = wxx @ x_fr + winputx @ self.inp.series[:, t] + all_noise[:, trial, t]
+                x_lvl += (-x_lvl + x_lvl_update) / self.time_div
+                x_fr = self.sigmoid(x_lvl)
+                out = wxout @ x_fr
+
+                if t == self.tr.start_train_n:
+                    do_train = True
+                if t == self.tr.end_train_n:
+                    do_train = False
+
+                if do_train and t % self.tr.spacing == 0:
+                    error = out - self.out.series[:, t]
+
+                    p_old = p_readout
+                    p_old_x = p_old @ x_fr
+                    den_readout = 1 + x_fr @ p_old_x
+
+                    # update P matrix
+                    p_readout = p_old - (np.outer(p_old_x, p_old_x) / den_readout)
+
+                    # update output weights
+                    dw = -error * p_old_x / den_readout
+                    wxout += dw
+
+        self.out.wxout_readout_trained = wxout
+
+    def test(self):
+        # assigning recurrent and input weights to workspace names
+        wxx = self.gen.wxx_recurr_trained
+        winputx = self.inp.winputx_ini
+        wxout = self.out.wxout_readout_trained
+
+        # creating all noise ahead of time
+        all_noise = self.noise_train * prng.normal(scale=np.sqrt(self.tr.time_step),
+                                                   size=(
+                                                       self.gen.n_units, self.n_trials_test,
+                                                       self.tr.n_steps))
+
+        # creating all initial condition for firing rate & activation level ahead of time
+        x_lvl_init = 2 * prng.rand(self.gen.n_units, self.n_trials_test) - 1
+        x_fr_init = self.sigmoid(x_lvl_init)
+
+        x_history = np.zeros((self.gen.n_units, self.tr.n_steps))
+        out_history = np.zeros((self.out.n_units, self.tr.n_steps))
+
+        for trial in range(self.n_trials_test):
+
+            x_lvl = x_lvl_init[:, trial]
+            x_fr = x_fr_init[:, trial]
+
+            # time steps are non-parallel
+            for t in tqdm(range(self.tr.n_steps)):
+                x_lvl_update = wxx @ x_fr + winputx @ self.inp.series[:, t] + all_noise[:, trial, t]
+                x_lvl += (-x_lvl + x_lvl_update) / self.time_div
+                x_fr = self.sigmoid(x_lvl)
+                out = wxout @ x_fr
+
+                x_history[:, t] = x_fr
+                out_history[:, t] = out
+
+            f = plt.figure()
+
+            ax1 = plt.subplot2grid((3, 1), (0, 0))
+            ax2 = plt.subplot2grid((3, 1), (1, 0), rowspan=2)
+
+            # top panel
+            ax1.plot(self.tr.time_ms, self.out.series.T, 'g')
+            ax1.plot(self.tr.time_ms, self.inp.series.T / 2, 'b')
+            ax1.plot(self.tr.time_ms, out_history.T, 'r')
+
+            # bottom panel
+            ten_trials = np.broadcast_to(np.expand_dims(self.tr.time_ms, 1), (self.tr.n_steps, 10))
+            ten_traces = x_history[:10, :].T + np.arange(10) * 2
+            ax2.plot(ten_trials, ten_traces)
