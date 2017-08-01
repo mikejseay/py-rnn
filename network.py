@@ -144,6 +144,8 @@ class Trainer(object):
     def harvest_innate(self):
         """ version which uses the @ operator instead """
 
+        print('harvesting innate trajectory')
+
         # assigning recurrent and input weights to workspace names
         wxx = self.gen.wxx_ini
         winputx = self.inp.winputx_ini
@@ -168,6 +170,9 @@ class Trainer(object):
         self.gen.innate = x_history  # save the innate trajectory
 
     def train_recurrent(self):
+
+        print('training recurrent weights with innate target')
+
         # assigning recurrent and input weights to workspace names
         wxx = self.gen.wxx_ini
         winputx = self.inp.winputx_ini
@@ -226,6 +231,9 @@ class Trainer(object):
         self.gen.wxx_recurr_trained = wxx
 
     def train_readout(self):
+
+        print('training readout weights with output target')
+
         # assigning recurrent and input weights to workspace names
         wxx = self.gen.wxx_recurr_trained
         winputx = self.inp.winputx_ini
@@ -281,6 +289,9 @@ class Trainer(object):
         self.out.wxout_readout_trained = wxout
 
     def test(self):
+
+        print('testing')
+
         # assigning recurrent and input weights to workspace names
         wxx = self.gen.wxx_recurr_trained
         winputx = self.inp.winputx_ini
@@ -299,6 +310,7 @@ class Trainer(object):
         x_history = np.zeros((self.gen.n_units, self.tr.n_steps))
         out_history = np.zeros((self.out.n_units, self.tr.n_steps))
 
+        f_lst = []
         for trial in range(self.n_trials_test):
 
             x_lvl = x_lvl_init[:, trial]
@@ -314,17 +326,27 @@ class Trainer(object):
                 x_history[:, t] = x_fr
                 out_history[:, t] = out
 
-            f = plt.figure()
+            f = plot_trial(self, x_history, out_history)
+            f_lst.append(f)
 
-            ax1 = plt.subplot2grid((3, 1), (0, 0))
-            ax2 = plt.subplot2grid((3, 1), (1, 0), rowspan=2)
+        return f_lst
 
-            # top panel
-            ax1.plot(self.tr.time_ms, self.out.series.T, 'g')
-            ax1.plot(self.tr.time_ms, self.inp.series.T / 2, 'b')
-            ax1.plot(self.tr.time_ms, out_history.T, 'r')
 
-            # bottom panel
-            ten_trials = np.broadcast_to(np.expand_dims(self.tr.time_ms, 1), (self.tr.n_steps, 10))
-            ten_traces = x_history[:10, :].T + np.arange(10) * 2
-            ax2.plot(ten_trials, ten_traces)
+def plot_trial(trainer_obj, x_history, out_history):
+
+    f = plt.figure()
+
+    ax1 = plt.subplot2grid((3, 1), (0, 0))
+    ax2 = plt.subplot2grid((3, 1), (1, 0), rowspan=2)
+
+    # top panel
+    ax1.plot(trainer_obj.tr.time_ms, trainer_obj.out.series.T, 'g')
+    ax1.plot(trainer_obj.tr.time_ms, trainer_obj.inp.series.T / 2, 'b')
+    ax1.plot(trainer_obj.tr.time_ms, out_history.T, 'r')
+
+    # bottom panel
+    ten_trials = np.broadcast_to(np.expand_dims(trainer_obj.tr.time_ms, 1), (trainer_obj.tr.n_steps, 10))
+    ten_traces = x_history[:10, :].T + np.arange(10) * 2
+    ax2.plot(ten_trials, ten_traces)
+
+    return f

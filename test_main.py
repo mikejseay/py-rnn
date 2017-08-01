@@ -1,6 +1,8 @@
 """ testing the network module """
 
+import os
 import numpy as np
+from matplotlib.backends.backend_pdf import PdfPages
 
 import network as N
 
@@ -31,9 +33,9 @@ TRAIN_PARAMS = {'tau_ms': 10,
                 'sigmoid': np.tanh,
                 'noise_harvest': 0,
                 'noise_train': 0.001,
-                'n_trials_recurrent': 20,
-                'n_trials_readout': 10,
-                'n_trials_test': 10, }
+                'n_trials_recurrent': 20,  # 20
+                'n_trials_readout': 10,  # 10
+                'n_trials_test': 10, }  # 10
 
 # instantiating objects
 GEN = N.Generator(**GENERATOR_PARAMS)
@@ -46,4 +48,14 @@ TRAIN.initialize_weights()
 TRAIN.harvest_innate()
 TRAIN.train_recurrent()
 TRAIN.train_readout()
-TRAIN.test()
+f_lst = TRAIN.test()
+
+cwd = os.getcwd()
+fig_dir = os.path.join(cwd, 'figs')
+if not os.path.exists(fig_dir):
+    os.makedirs(fig_dir)
+pdf_path = os.path.join(fig_dir, 'test_result.pdf')
+
+with PdfPages(pdf_path) as pdf:
+    for f in f_lst:
+        pdf.savefig(f)
