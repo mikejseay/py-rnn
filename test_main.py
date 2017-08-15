@@ -50,7 +50,7 @@ TRAIN = N.Trainer(GEN, IN, OUT, TRYAL, **TRAIN_PARAMS)
 TRAIN.initialize_weights()
 TRAIN.harvest_innate()
 TRAIN.train_recurrent()
-TRAIN.train_readout()
+x_history, out_history, error_history, wxout_history = TRAIN.train_readout()
 f_lst = TRAIN.test()
 
 # saving the test trial figures into a PDF (one trial per page)

@@ -1,11 +1,12 @@
 """ stuff related to neural networks """
 
 # TODO
-# pre-extract np stuff
+# pre-extract np stuff (?)
 # use in-place arithmetic when possible
 # take care with rng seeding, etc.
 # compare sparse array to regular numpy array
 # figure out how to vectorize the recurrent training step (no for loop over plastic units)
+# build lightweight, optional trial "logging" for visualizing e.g. training
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -46,6 +47,10 @@ class Trial(object):
 
         self.start_train_n = int(np.round(start_train_ms / time_step))
         self.end_train_n = int(np.round(end_train_ms / time_step))
+        self.training_steps = np.array([
+            t for t in range(self.start_train_n, self.end_train_n) if t % self.spacing == 0
+        ])
+        self.n_training_steps = self.training_steps.size
 
         self.max_ms = self.end_train_ms + self.extra_end_ms
         self.n_steps = int(np.floor(self.max_ms / self.time_step))
@@ -181,6 +186,7 @@ class Trainer(object):
         # assigning recurrent and input weights to workspace names
         wxx = self.gen.wxx_ini
         winputx = self.inp.winputx_ini
+        wxout = self.out.wxout_ini
 
         # initializing the P matrix
         delta = 1
@@ -202,6 +208,13 @@ class Trainer(object):
         x_lvl_init = 2 * prng.rand(self.gen.n_units, self.n_trials_recurrent) - 1
         x_fr_init = self.sigmoid(x_lvl_init)
 
+        # initializing history vars
+        x_history = np.empty((self.n_trials_recurrent, self.gen.n_units, self.tr.n_steps))
+        out_history = np.empty((self.n_trials_recurrent, self.out.n_units, self.tr.n_steps))
+        wxx_history = np.empty((self.n_trials_recurrent,
+                                self.gen.n_plastic, self.tr.n_training_steps),)
+                               # dtype=np.dtype('float16'))
+
         # trials are non-parallel
         do_train = False
         for trial in range(self.n_trials_recurrent):
@@ -210,10 +223,15 @@ class Trainer(object):
             x_fr = x_fr_init[:, trial]
 
             # time steps are non-parallel
+            train_dum = 0
             for t in tqdm(range(self.tr.n_steps)):
                 x_lvl_update = wxx @ x_fr + winputx @ self.inp.series[:, t] + all_noise[:, trial, t]
                 x_lvl += (-x_lvl + x_lvl_update) / self.time_div
                 x_fr = self.sigmoid(x_lvl)
+                out = wxout @ x_fr
+
+                x_history[trial, :, t] = x_fr
+                out_history[trial, :, t] = out
 
                 if t == self.tr.start_train_n:
                     do_train = True
@@ -233,7 +251,12 @@ class Trainer(object):
                         dw = -error[p_unit] * p_old_x / den_recurr
                         wxx[p_unit, pre_plastic_inds[p_unit]] += dw
 
+                    wxx_history[trial, :, train_dum] = np.sum(np.fabs(wxx[:self.gen.n_plastic, :]), 1)
+                    train_dum += 1
+
         self.gen.wxx_recurr_trained = wxx
+
+        return x_history, out_history, wxx_history
 
     def train_readout(self):
         """ train the readout weights using a pre-defined output as the target.
@@ -251,28 +274,48 @@ class Trainer(object):
         p_readout = np.eye(self.gen.n_units) / delta
 
         # creating all noise ahead of time
+        # separate noise for each neuron, trial, and time-step
         all_noise = self.noise_train * prng.normal(scale=np.sqrt(self.tr.time_step),
                                                    size=(
                                                        self.gen.n_units, self.n_trials_readout,
                                                        self.tr.n_steps))
 
-        # creating all initial condition for firing rate & activation level ahead of time
+        # creating all initial condition for firing rate & activation level ahead of time,
+        # potentially separately for each trial
         x_lvl_init = 2 * prng.rand(self.gen.n_units, self.n_trials_readout) - 1
         x_fr_init = self.sigmoid(x_lvl_init)
 
+        x_history = np.empty((self.n_trials_readout, self.gen.n_units, self.tr.n_steps))
+
+        out_history = np.empty((self.n_trials_readout, self.out.n_units, self.tr.n_steps))
+        # error_history = np.zeros((self.n_trials_readout, self.out.n_units, self.tr.n_steps))
+
+        # p_history = np.zeros((self.n_trials_readout, self.out.n_units, self.out.n_units, self.tr.n_steps))
+        wxout_history = np.zeros((self.n_trials_readout, self.out.n_units, self.gen.n_units, self.tr.n_training_steps))
+
+        # set initial activity and firing rate to be for first trial
+        x_lvl = x_lvl_init[:, 0]
+        x_fr = x_fr_init[:, 0]
+
         # trials are non-parallel
         do_train = False
+        discontinuous_trials = True
         for trial in range(self.n_trials_readout):
 
-            x_lvl = x_lvl_init[:, trial]
-            x_fr = x_fr_init[:, trial]
+            if discontinuous_trials:
+                x_lvl = x_lvl_init[:, trial]
+                x_fr = x_fr_init[:, trial]
 
             # time steps are non-parallel
+            train_dum = 0
             for t in tqdm(range(self.tr.n_steps)):
                 x_lvl_update = wxx @ x_fr + winputx @ self.inp.series[:, t] + all_noise[:, trial, t]
                 x_lvl += (-x_lvl + x_lvl_update) / self.time_div
                 x_fr = self.sigmoid(x_lvl)
                 out = wxout @ x_fr
+
+                x_history[trial, :, t] = x_fr
+                out_history[trial, :, t] = out
 
                 if t == self.tr.start_train_n:
                     do_train = True
@@ -281,19 +324,23 @@ class Trainer(object):
 
                 if do_train and t % self.tr.spacing == 0:
                     error = out - self.out.series[:, t]
+                    # error_history[trial, :, t] = error
 
-                    p_old = p_readout
-                    p_old_x = p_old @ x_fr
+                    p_old_x = p_readout @ x_fr
                     den_readout = 1 + x_fr @ p_old_x
 
                     # update P matrix
-                    p_readout = p_old - (np.outer(p_old_x, p_old_x) / den_readout)
+                    p_readout -= (np.outer(p_old_x, p_old_x) / den_readout)
 
                     # update output weights
                     dw = -error * p_old_x / den_readout
                     wxout += dw
+                    wxout_history[trial, :, :, train_dum] = wxout
+                    train_dum += 1
 
         self.out.wxout_readout_trained = wxout
+
+        return x_history, out_history, wxout_history
 
     def test(self):
         """ test the network by presenting the input and recording the output """
@@ -315,8 +362,8 @@ class Trainer(object):
         x_lvl_init = 2 * prng.rand(self.gen.n_units, self.n_trials_test) - 1
         x_fr_init = self.sigmoid(x_lvl_init)
 
-        x_history = np.zeros((self.gen.n_units, self.tr.n_steps))
-        out_history = np.zeros((self.out.n_units, self.tr.n_steps))
+        x_history = np.empty((self.gen.n_units, self.tr.n_steps))
+        out_history = np.empty((self.out.n_units, self.tr.n_steps))
 
         f_lst = []
         for trial in range(self.n_trials_test):
